@@ -1,0 +1,13 @@
+# The artifacts must never land in this repo. It is public so that Streamlit
+# Community Cloud can deploy it; the model and the recording excerpts live in a
+# private Hugging Face dataset and are fetched at startup with a token. If you
+# ever see model_out/ appear in `git status` here, something is wrong.
+model_out/
+*.pkl
+*.npz
+*.parquet
+*.xlsx
+eda_out/
+.venv/
+__pycache__/
+.streamlit/secrets.toml

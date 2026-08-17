@@ -1,0 +1,10 @@
+# Pinned rather than left to the viewer's operating system. The figures read
+# st.context.theme to pick their foreground colours, and mpl.rcParams is
+# process-wide, so if two viewers with opposite OS themes load the app at the
+# same time they can race on it. Pinning removes that entirely, and means the
+# demo looks the same on every projector it is shown through.
+[theme]
+base = "light"
+
+[server]
+maxUploadSize = 200

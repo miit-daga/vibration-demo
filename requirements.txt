@@ -1,0 +1,19 @@
+# Pinned to the versions the model was trained and pickled with on Kaggle.
+# scikit-learn is the one that genuinely matters: a HistGradientBoosting pickle
+# will not load across minor versions, and the failure message names neither
+# scikit-learn nor a version, so it is worth pinning rather than debugging.
+scikit-learn==1.6.1
+numpy==2.0.2
+pandas==2.3.3
+scipy==1.16.3
+
+# 1.50 is the floor for width="stretch" on st.dataframe; the older
+# use_container_width argument it replaces is past its announced removal date.
+streamlit>=1.50
+matplotlib>=3.7
+pyarrow>=14
+
+# Only used when HF_ARTIFACT_REPO is set, to pull the model from a private
+# Hugging Face dataset instead of reading it out of this repo. Imported lazily,
+# so it costs nothing when that variable is absent.
+huggingface_hub>=0.25
