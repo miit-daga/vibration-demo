@@ -16,10 +16,12 @@ import os
 import hmac
 import json
 import pickle
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1  # noqa: F401  (st.components.v1)
 import matplotlib as mpl
 import matplotlib.pyplot as plt
 from scipy import signal, stats
@@ -379,6 +381,35 @@ def to_windows(df):
 # ---------------------------------------------------------------------------
 # Sidebar
 # ---------------------------------------------------------------------------
+# The presenter's brief ships alongside the model in the private artifact store,
+# not in this repository, because the repository is public so that Community
+# Cloud can deploy it. Serving it here means one URL and one password cover both
+# the demonstration and the document, rather than the brief needing its own host
+# and its own access control.
+BRIEF = f"{ART}/46_briefing.html"
+if os.path.exists(BRIEF):
+    page = st.sidebar.radio("Page", ["Demonstration", "Briefing"],
+                            label_visibility="collapsed")
+    if page == "Briefing":
+        doc = open(BRIEF, encoding="utf-8").read()
+        st.sidebar.download_button(
+            "Download to read full screen", doc, mime="text/html",
+            file_name="bearing-diagnosis-briefing.html")
+        st.sidebar.caption("The document is rendered in a frame below, so it "
+                           "scrolls inside the page. Downloading it and opening "
+                           "the file in a browser tab reads better.")
+        # An iframe rather than st.html: the document carries its own complete
+        # stylesheet, including body rules, which would otherwise leak out and
+        # restyle Streamlit's own chrome. height="content" lets the frame grow to
+        # the document so the page scrolls once instead of nesting a scrollbar.
+        # st.components.v1.html is the fallback for Streamlit older than st.iframe,
+        # and is itself past its announced removal date, so it is not the default.
+        if hasattr(st, "iframe"):
+            st.iframe(Path(BRIEF), height="content")
+        else:
+            st.components.v1.html(doc, height=1700, scrolling=True)
+        st.stop()
+
 st.sidebar.title("Input")
 st.sidebar.caption(
     f"CSV with columns t, x, y, z (or just x, y, z) sampled at {FS:.0f} Hz. "
