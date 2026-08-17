@@ -488,39 +488,88 @@ with st.sidebar.expander("Model card"):
                  f"({THRESH_FAR:.1%})")
     st.warning(CFG["scope_limits"])
 
-with st.sidebar.expander("Self-check: does this app compute the same features "
-                         "the model was trained on?"):
-    st.caption("Recomputes features for real training windows and compares "
-               "them against the EDA feature table. If these disagree, every "
-               "prediction on this page is wrong, so it is worth knowing.")
-    if st.button("Run self-check"):
-        try:
-            Ftab = pd.read_parquet(f"{EDA}/10_window_features.parquet")
-            sample = Ftab.sample(3, random_state=0)
-            worst = 0.0
-            for _, row in sample.iterrows():
-                rec = pd.read_parquet(
-                    os.path.join(PARQ, f"1500RPM_{row['class']}.parquet"))
-                rec = rec.iloc[:, :4]
-                rec.columns = ["t"] + AXES
-                rec = rec.dropna()
-                i = int(round(row["t_start"] * FS))
-                w = rec[AXES].to_numpy()[i:i + WLEN].T
-                got = features_for_window(w)
-                for c in FEATURE_COLS:
-                    a, b = got.get(c, np.nan), row[c]
-                    if np.isfinite(a) and np.isfinite(b) and abs(b) > 1e-9:
-                        worst = max(worst, abs(a - b) / abs(b))
-            if worst < 1e-6:
-                st.success(f"Match. Worst relative difference {worst:.2e} "
-                           f"across {len(FEATURE_COLS)} features.")
-            else:
-                st.error(f"MISMATCH. Worst relative difference {worst:.3e}. "
-                         f"The feature code here has drifted from "
-                         f"motor_eda.py. Do not trust predictions.")
-        except (FileNotFoundError, OSError) as e:
-            st.info(f"Needs the EDA parquet and the recordings to check "
-                    f"against. Not found: {e}")
+# Feature extraction here is a verbatim copy of motor_eda.py, and a drift between
+# the two would not raise an error. It would compute slightly different numbers,
+# hand them to a model expecting the originals, and return confident wrong
+# answers. That is the one failure mode with no symptoms, so it gets a test.
+#
+# The primary test runs anywhere, including on a host that has nothing but the
+# model and the bundled excerpts: classify all five known recordings and check
+# that each comes back as itself. It exercises the entire chain -- windowing,
+# feature extraction, scaling, the classifier and the health index -- against
+# data whose correct answer is known, so drifted feature code surfaces as a
+# misclassification. Results go to the main area rather than the sidebar, because
+# a narrow column is the wrong place for something an audience is meant to read.
+#
+# The second test is stricter but needs the EDA feature table and the full
+# recordings, so it only appears on a machine that has them.
+STRICT_TABLE = f"{EDA}/10_window_features.parquet"
+
+with st.sidebar.expander("Self-check: is the model behaving?"):
+    if DEMO is not None:
+        st.caption("Classifies all five known recordings and checks each comes "
+                   "back as itself. Covers everything from windowing to the "
+                   "final verdict, on data whose answer is known.")
+        if st.button("Run self-check", key="sc_e2e"):
+            with st.spinner("Classifying five recordings..."):
+                rows, correct = [], 0
+                for k, c in enumerate(DEMO["classes"]):
+                    a = DEMO["data"][k]
+                    W = [a[i:i + WLEN].T
+                         for i in range(0, len(a) - WLEN + 1, HOP)]
+                    X = (pd.DataFrame([features_for_window(w) for w in W])
+                         .reindex(columns=FEATURE_COLS))
+                    Xv = np.nan_to_num(X.to_numpy(), nan=0.0, posinf=0.0,
+                                       neginf=0.0)
+                    p = MODEL["classifier"].predict_proba(Xv).mean(0)
+                    h = float(np.median(MODEL["health_cov"].mahalanobis(
+                        MODEL["health_scaler"].transform(Xv))))
+                    got = CLASSES[int(p.argmax())]
+                    correct += got == c
+                    rows.append({"recording": c, "diagnosed as": got,
+                                 "confidence": f"{p.max():.1%}",
+                                 "health index": f"{h:,.0f}",
+                                 "alarm": "yes" if h > THRESH else "no",
+                                 "result": "pass" if got == c else "FAIL"})
+                st.session_state["selfcheck"] = (rows, correct, len(W))
+
+    if os.path.exists(STRICT_TABLE):
+        st.divider()
+        st.caption("Stricter, and only available where the EDA outputs are: "
+                   "compares recomputed feature values against the exact ones "
+                   "the model was trained on.")
+        if st.button("Compare against the EDA table", key="sc_strict"):
+            try:
+                Ftab = pd.read_parquet(STRICT_TABLE)
+                sample = Ftab.sample(3, random_state=0)
+                worst = 0.0
+                for _, row in sample.iterrows():
+                    rec = pd.read_parquet(
+                        os.path.join(PARQ, f"1500RPM_{row['class']}.parquet"))
+                    rec = rec.iloc[:, :4]
+                    rec.columns = ["t"] + AXES
+                    rec = rec.dropna()
+                    i = int(round(row["t_start"] * FS))
+                    w = rec[AXES].to_numpy()[i:i + WLEN].T
+                    got = features_for_window(w)
+                    for c in FEATURE_COLS:
+                        a, b = got.get(c, np.nan), row[c]
+                        if np.isfinite(a) and np.isfinite(b) and abs(b) > 1e-9:
+                            worst = max(worst, abs(a - b) / abs(b))
+                if worst < 1e-6:
+                    st.success(f"Match. Worst relative difference {worst:.2e} "
+                               f"across {len(FEATURE_COLS)} features.")
+                else:
+                    st.error(f"MISMATCH. Worst relative difference "
+                             f"{worst:.3e}. The feature code here has drifted "
+                             f"from motor_eda.py. Do not trust predictions.")
+            except (FileNotFoundError, OSError) as e:
+                st.info(f"Needs the full recordings too. Not found: {e}")
+
+    if DEMO is None and not os.path.exists(STRICT_TABLE):
+        st.info("Needs either the bundled example recordings or the EDA "
+                "feature table. Neither is present, so there is nothing to "
+                "check against.")
 
 
 # ---------------------------------------------------------------------------
@@ -559,6 +608,29 @@ elif example:
                 f"upload a CSV.")
 
 st.title("Bearing fault diagnosis")
+
+# Rendered here rather than in the sidebar so it is legible on a projector, and
+# above the analysis so it is the first thing seen after being run.
+if "selfcheck" in st.session_state:
+    rows, correct, n_win = st.session_state["selfcheck"]
+    n = len(rows)
+    st.subheader("Self-check")
+    st.caption(f"All five known recordings put through the full pipeline, "
+               f"{n_win} windows each. Each row should be diagnosed as itself.")
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+    if correct == n:
+        st.success(f"**{correct} of {n} correct.** Windowing, feature "
+                   f"extraction, scaling, the classifier and the health index "
+                   f"all agree with the model as it was trained. Healthy is "
+                   f"the only recording that does not raise the alarm.")
+    else:
+        st.error(f"**Only {correct} of {n} correct.** Something in the chain has "
+                 f"drifted from the trained model. Predictions on this page "
+                 f"should not be trusted until this is resolved.")
+    if st.button("Hide self-check"):
+        del st.session_state["selfcheck"]
+        st.rerun()
+    st.divider()
 
 if df is None:
     st.info("Upload a CSV on the left, or pick a known recording to see how "
